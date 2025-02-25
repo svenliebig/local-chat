@@ -1,10 +1,37 @@
 from transformers import BlenderbotTokenizer, BlenderbotForConditionalGeneration
+from transformers import BartTokenizer, BartForConditionalGeneration
 import time
+import warnings
 
 # ANSI color codes
 GRAY = "\033[90m"
 RESET = "\033[0m"
 RED = "\033[91m"
+
+
+def summarize_conversation(conversation_history):
+    # Initialize summarization model
+    summarizer_name = "facebook/bart-large-cnn"
+    summarizer_tokenizer = BartTokenizer.from_pretrained(summarizer_name)
+    summarizer_model = BartForConditionalGeneration.from_pretrained(summarizer_name)
+
+    # Join conversation history into a single string
+    text_to_summarize = " ".join(conversation_history[:-2])  # Exclude the last exchange
+
+    # Tokenize and generate summary
+    inputs = summarizer_tokenizer(
+        [text_to_summarize], max_length=1024, truncation=True, return_tensors="pt"
+    )
+    summary_ids = summarizer_model.generate(
+        **inputs,
+        max_length=64,
+        min_length=20,
+        num_beams=4,
+    )
+
+    summary = summarizer_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return f"Summary: {summary}"
+
 
 def main():
     # Initialize the model and tokenizer
@@ -15,7 +42,7 @@ def main():
     print("Welcome! Start chatting with the model. Type 'exit' to quit.\n")
 
     # Keep track of conversation history
-    conversation_history = []  # Change to list to store multiple exchanges
+    conversation_history = []
 
     while True:
         # Get user input
@@ -30,16 +57,27 @@ def main():
 
         # Time the tokenization process
         token_start = time.time()
-        # Check if input is too long and truncate from the beginning if necessary
-        encoded_input = tokenizer.encode(current_input)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            encoded_input = tokenizer.encode(current_input)
+
+        # If conversation is too long, summarize older parts
         if len(encoded_input) > 128:
-            # Remove oldest messages until we're under the limit
-            while len(encoded_input) > 120 and conversation_history:
-                conversation_history.pop(0)  # Remove oldest message
-                current_input = " ".join(conversation_history)
-                encoded_input = tokenizer.encode(current_input)
+            print(f"{RED}> {GRAY}Summarizing conversation history...{RESET}")
+            # Keep the last exchange (last user input and bot response) as is
+            recent_messages = (
+                conversation_history[-2:]
+                if len(conversation_history) > 2
+                else conversation_history
+            )
+            # Summarize the rest
+            summary = summarize_conversation(conversation_history)
+            conversation_history = [summary] + recent_messages
+            current_input = " ".join(conversation_history)
+            encoded_input = tokenizer.encode(current_input)
             print(
-                f"  {RED}>{GRAY}Truncated conversation to fit context window (removed oldest messages, remaining: {len(conversation_history)}){RESET}"
+                f"{RED}> {GRAY}Conversation summarized (new token length: {len(encoded_input)}){RESET}"
             )
 
         # Tokenize for generation
